@@ -2,6 +2,7 @@ library(tidyverse)
 library(zeallot)
 library(caret)
 library(doParallel)
+library(yardstick)
 
 prediction_data_8 <- read_csv("data/prediction_data_8.csv") %>%
     filter(!is.na(scale_score_mt) & !is.na(scale_score_rd) & !is.na(ready_grad)) %>%
@@ -80,4 +81,31 @@ fit_list <- map(names(model_list), function(m) {
 
 # A safe version of predict
 safely_predict <- safely(predict)
-predict_list <- map(fit_list, safely_predict, test_x)
+
+# Extract Test Accuracies
+accuracy_list <- map(fit_list, safely_predict, test_x) %>%
+    map("result") %>%
+    map(~ . == test_y) %>%
+    map_dbl(mean, na.rm = TRUE)
+
+names(accuracy_list) <- methods_list
+accuracy_list
+
+# Extract `ready` probabilities by model
+ready_probs <- map(fit_list, safely_predict, test_x, type = "prob") %>%
+    map("result") %>%
+    map("ready")
+
+names(ready_probs) <- methods_list
+
+ready_probs["gpls"] <- NULL
+
+probs_df <- as_tibble(ready_probs) %>%
+    mutate(truth = test_y)
+
+roc_auc(probs_df, truth = truth, gbm)
+roc_auc(probs_df, truth = truth, rpart)
+roc_auc(probs_df, truth = truth, rlda)
+roc_auc(probs_df, truth = truth, nnet)
+roc_auc(probs_df, truth = truth, xgbLinear)
+roc_auc(probs_df, truth = truth, xgbTree)
