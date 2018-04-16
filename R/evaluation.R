@@ -93,20 +93,17 @@ accuracy_by_school <- prediction_data_8 %>%
 
 # AUC by school
 schools_list <- prediction_data_8 %>%
-    group_by(system, school) %>%
-    # AUC fails if all outcomes are "ready" or "not_ready", drop these schools
-    mutate(temp = mean(ready_grad == "ready")) %>%
-    ungroup() %>%
-    filter(temp != 0 & temp != 1) %>%
     mutate(school = paste(system, school)) %>%
     split(.$school)
-    
+
+safely_auc <- safely(roc_auc, otherwise = NA_real_)
+
 auc_by_school <- tibble(
-    system = names(schools_list),
-    auc_gbm = map_dbl(schools_list, roc_auc, ready_grad, prob_gbm),
-    auc_rpart = map_dbl(schools_list, roc_auc, ready_grad, prob_rpart),
-    auc_rlda = map_dbl(schools_list, roc_auc, ready_grad, prob_rlda),
-    auc_nnet = map_dbl(schools_list, roc_auc, ready_grad, prob_nnet),
-    auc_xgblinear = map_dbl(schools_list, roc_auc, ready_grad, prob_xgblinear),
-    auc_xgbtree = map_dbl(schools_list, roc_auc, ready_grad, prob_xgbtree)
+    school = names(schools_list),
+    auc_gbm = map(schools_list, safely_auc, ready_grad, prob_gbm) %>% map_dbl("result"),
+    auc_rpart = map(schools_list, safely_auc, ready_grad, prob_rpart) %>% map_dbl("result"),
+    auc_rlda = map(schools_list, safely_auc, ready_grad, prob_rlda) %>% map_dbl("result"),
+    auc_nnet = map(schools_list, safely_auc, ready_grad, prob_nnet) %>% map_dbl("result"),
+    auc_xgblinear = map(schools_list, safely_auc, ready_grad, prob_xgblinear) %>% map_dbl("result"),
+    auc_xgbtree = map(schools_list, safely_auc, ready_grad, prob_xgbtree) %>% map_dbl("result")
 )
