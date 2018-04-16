@@ -269,15 +269,15 @@ prediction_data_6 <- bind_rows(mutate(abs_6_2012, cohort = 2012), mutate(abs_6_2
         funs(if_else(is.na(.), 0L, .))) %>%
     mutate(ready_grad = if_else(on_time_grad == 1L & is.na(act_composite), 0L, ready_grad)) %>%
     select(cohort, everything()) %>%
-  # Calculate cohort (school) aggregate metrics
-  group_by(system, school) %>%
-  mutate(scale_score_mt_sq = scale_score_mt^2,
-      scale_score_rd_sq = scale_score_rd^2,
-      scale_score_sc_sq = scale_score_sc^2,
-      school_scale_score_mt = mean(scale_score_mt, na.rm = TRUE),
-      school_scale_score_rd = mean(scale_score_rd, na.rm = TRUE),
-      school_scale_score_sc = mean(scale_score_sc, na.rm = TRUE),
-      school_chronic_abs = 100 * mean(n_absences/isp_days > 0.1, na.rm = TRUE)
-  )
+# Calculate cohort (school) aggregate metrics
+    group_by(system, school) %>%
+    mutate(scale_score_mt_sq = scale_score_mt^2,
+        scale_score_rd_sq = scale_score_rd^2,
+        scale_score_sc_sq = scale_score_sc^2,
+        school_scale_score_mt = mean(scale_score_mt, na.rm = TRUE),
+        school_scale_score_rd = mean(scale_score_rd, na.rm = TRUE),
+        school_scale_score_sc = mean(scale_score_sc, na.rm = TRUE),
+        school_chronic_abs = 100 * mean(n_absences/isp_days > 0.1, na.rm = TRUE)
+    )
 
 write_csv(prediction_data_6, path = "data/prediction_data_6.csv")

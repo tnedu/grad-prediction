@@ -50,13 +50,13 @@ preds_logistic <- predict(model_logistic, test_x)
 confusionMatrix(preds_logistic, test_y)
 
 # Other methods
-methods_list <- c("gbm", "rpart", "rlda", "gpls", "nnet", "xgbLinear", "xgbTree")
+methods_list <- c("gbm", "rpart", "rlda", "nnet", "xgbLinear", "xgbTree")
 
 model_list <- vector(length(methods_list), mode = "list")
 names(model_list) <- methods_list
 
 global_args <- list(x = quote(train_x), y = quote(train_y),
-    metric = "AUC", tuneLength = 50,
+    metric = "AUC", tuneLength = 100,
     trControl = train_controls)
 
 fit_list <- map(names(model_list), function(m) {
@@ -68,7 +68,7 @@ fit_list <- map(names(model_list), function(m) {
     model_args <- c(global_args, method = m) # create a new argument object, use method here
     model <- tryCatch(do.call(train, model_args), error = function(e) NULL)
 
-    write_rds(model, paste0("models/grade_8_", m, ".rds"))
+    # write_rds(model, paste0("models/grade_8_", m, ".rds"))
 
     message("Model method: ", m, " completed.")
 
@@ -79,12 +79,8 @@ fit_list <- map(names(model_list), function(m) {
     }
 )
 
-# A safe version of predict
-safely_predict <- safely(predict)
-
 # Extract Test Accuracies
-accuracy_list <- map(fit_list, safely_predict, test_x) %>%
-    map("result") %>%
+accuracy_list <- map(fit_list, predict, test_x) %>%
     map(~ . == test_y) %>%
     map_dbl(mean, na.rm = TRUE)
 
@@ -92,13 +88,10 @@ names(accuracy_list) <- methods_list
 accuracy_list
 
 # Extract `ready` probabilities by model
-ready_probs <- map(fit_list, safely_predict, test_x, type = "prob") %>%
-    map("result") %>%
+ready_probs <- map(fit_list, predict, test_x, type = "prob") %>%
     map("ready")
 
 names(ready_probs) <- methods_list
-
-ready_probs["gpls"] <- NULL
 
 probs_df <- as_tibble(ready_probs) %>%
     mutate(truth = test_y)
