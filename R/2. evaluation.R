@@ -5,6 +5,7 @@ library(yardstick)
 library(rgdal)
 library(leaflet)
 
+## Trained models
 model_gbm <- read_rds("models/grade_8_gbm.rds")
 model_rpart <- read_rds("models/grade_8_rpart.rds")
 model_rlda <- read_rds("models/grade_8_rlda.rds")
@@ -17,6 +18,7 @@ predictors <- c("n_absences", "E", "I", "R", "S", "assault", "weapons",
     "scale_score_mt", "scale_score_mt_sq", "scale_score_rd", "scale_score_rd_sq",
     "school_scale_score_mt", "school_scale_score_rd", "school_chronic_abs")
 
+## Raw data to apply trained models to
 prediction_data_8 <- read_csv("data/prediction_data_8.csv") %>%
     filter(cohort == 2012,
         !is.na(scale_score_mt) & !is.na(scale_score_rd) & !is.na(ready_grad)) %>%
@@ -60,7 +62,7 @@ prediction_data_8$prob_xgblinear <- predict(model_xgblinear, prediction_data_8, 
 prediction_data_8$pred_xgbtree <- predict(model_xgbtree, prediction_data_8)
 prediction_data_8$prob_xgbtree <- predict(model_xgbtree, prediction_data_8, type = "prob")$ready
 
-# Accuracy by district
+## Accuracy by district
 accuracy_by_district <- prediction_data_8 %>%
     mutate(accuracy_gbm = ready_grad == pred_gbm,
         accuracy_rpart = ready_grad == pred_rpart,
@@ -69,16 +71,24 @@ accuracy_by_district <- prediction_data_8 %>%
         accuracy_xgblinear = ready_grad == pred_xgblinear,
         accuracy_xgbtree = ready_grad == pred_xgbtree) %>%
     group_by(system) %>%
-    summarise_at(vars(starts_with("accuracy")), ~ round5(100 * mean(.), 1))
+    summarise_at(vars(starts_with("accuracy")), ~ round5(100 * mean(.), 1)) %>%
+    mutate(accuracy_max = pmax(accuracy_gbm, accuracy_rpart, accuracy_rlda, accuracy_nnet, accuracy_xgblinear, accuracy_xgbtree)) %>%
+    arrange(accuracy_max)
 
-ggplot(accuracy_by_district, aes(x = factor(system), y = accuracy_gbm)) +
-    geom_bar(stat = "identity", width = 1) +
-    scale_x_discrete(limits = factor(accuracy_by_district$system)) +
-    theme_minimal() +
-    theme(axis.text.x = element_text(angle = 90, hjust = 1),
-        axis.title.x = element_blank())
+# All model accuracies by district
+accuracy_by_district %>%
+    gather(model, accuracy, accuracy_gbm:accuracy_xgbtree) %>%
+    ggplot(aes(x = factor(system), y = accuracy, color = model)) +
+        scale_x_discrete(limits = factor(accuracy_by_district$system)) +
+        geom_point(alpha = 0.5) +
+        theme_minimal() +
+        theme(axis.text.x = element_text(angle = 90, hjust = 1),
+            axis.title.x = element_blank(),
+            legend.position = "bottom")
 
-# AUC by district
+plotly::ggplotly()
+
+## AUC by district
 districts_list <- split(prediction_data_8, prediction_data_8$system)
 
 auc_by_district <- tibble(
@@ -89,7 +99,22 @@ auc_by_district <- tibble(
     auc_nnet = map_dbl(districts_list, roc_auc, ready_grad, prob_nnet),
     auc_xgblinear = map_dbl(districts_list, roc_auc, ready_grad, prob_xgblinear),
     auc_xgbtree = map_dbl(districts_list, roc_auc, ready_grad, prob_xgbtree)
-)
+) %>%
+    mutate(auc_max = pmax(auc_gbm, auc_rpart, auc_rlda, auc_nnet, auc_xgblinear, auc_xgbtree)) %>%
+    arrange(auc_max)
+
+# All model AUC by district
+auc_by_district %>%
+    gather(model, auc, auc_gbm:auc_xgbtree) %>%
+    ggplot(aes(x = factor(system), y = auc, color = model)) +
+        scale_x_discrete(limits = factor(auc_by_district$system)) +
+        geom_point(alpha = 0.5) +
+        theme_minimal() +
+        theme(axis.text.x = element_text(angle = 90, hjust = 1),
+              axis.title.x = element_blank(),
+              legend.position = "bottom")
+
+plotly::ggplotly()
 
 # Accuracy by school
 accuracy_by_school <- prediction_data_8 %>%
@@ -100,7 +125,8 @@ accuracy_by_school <- prediction_data_8 %>%
         accuracy_xgblinear = ready_grad == pred_xgblinear,
         accuracy_xgbtree = ready_grad == pred_xgbtree) %>%
     group_by(system, school) %>%
-    summarise_at(vars(starts_with("accuracy")), ~ round5(100 * mean(.), 1))
+    summarise_at(vars(starts_with("accuracy")), ~ round5(100 * mean(.), 1)) %>%
+    mutate(accuracy_max = pmax(accuracy_gbm, accuracy_rpart, accuracy_rlda, accuracy_nnet, accuracy_xgblinear, accuracy_xgbtree))
 
 # AUC by school
 schools_list <- prediction_data_8 %>%
@@ -117,10 +143,19 @@ auc_by_school <- tibble(
     auc_nnet = map(schools_list, safely_auc, ready_grad, prob_nnet) %>% map_dbl("result"),
     auc_xgblinear = map(schools_list, safely_auc, ready_grad, prob_xgblinear) %>% map_dbl("result"),
     auc_xgbtree = map(schools_list, safely_auc, ready_grad, prob_xgbtree) %>% map_dbl("result")
-)
+) %>%
+    mutate(auc_max = pmax(auc_gbm, auc_rpart, auc_rlda, auc_nnet, auc_xgblinear, auc_xgbtree))
 
 # Maps
-unified <- readOGR("data/shapefile/cb_2017_47_unsd_500k/cb_2017_47_unsd_500k.shp")
+shapefile <- readOGR("data/shapefile/EDGE_SCHOOLDISTRICT_TL17_SY1516/schooldistrict_sy1516_tl17.shp")
+
+shapefile <- shapefile[shapefile$STATEFP == "47", ]
+
+shapefile@data$UNSDLEA <- as.character(shapefile@data$UNSDLEA)
+shapefile@data$ELSDLEA <- as.character(shapefile@data$ELSDLEA)
+shapefile@data$SCSDLEA <- as.character(shapefile@data$SCSDLEA)
+
+shapefile@data$UNSDLEA <- pmax(shapefile$ELSDLEA, shapefile$UNSDLEA, shapefile$SCSDLEA, na.rm = TRUE)
 
 xwalk <- tibble::tribble(
     ~system, ~UNSDLEA,
@@ -148,9 +183,9 @@ xwalk <- tibble::tribble(
     130, "00630",
     140, "00660",
     150, "00750",
-    151, "?",
+    151, "03210",
     160, "00780",
-    161, "",
+    161, "02610",
     162, "04200",
     170, "00850",
     180, "00900",
@@ -179,12 +214,12 @@ xwalk <- tibble::tribble(
     350, "01650",
     360, "01680",
     370, "01740",
-    371, "",
+    371, "03660",
     380, "01770",
     390, "01800",
-    391, "",
+    391, "02460",
     400, "01830",
-    401, "",
+    401, "03360",
     410, "01860",
     420, "01920",
     430, "01980",
@@ -201,8 +236,8 @@ xwalk <- tibble::tribble(
     530, "02520",
     531, "02400",
     540, "02820",
-    541, "",
-    542, "",
+    541, "00120",
+    542, "01140",
     550, "02880",
     560, "02550",
     570, "02580",
@@ -212,7 +247,7 @@ xwalk <- tibble::tribble(
     600, "02760",
     610, "02910",
     620, "03000",
-    621, "",
+    621, "04050",
     630, "03030",
     640, "03060",
     650, "03090",
@@ -224,7 +259,7 @@ xwalk <- tibble::tribble(
     700, "03450",
     710, "03480",
     720, "03510",
-    721, "",
+    721, "00930",
     730, "03590",
     740, "03600",
     750, "03690",
@@ -256,30 +291,57 @@ xwalk <- tibble::tribble(
     920, "04470",
     930, "04500",
     940, "04530",
-    941, "",
+    941, "01260",
     950, "04550",
-    951, ""
+    951, "02370"
 )
 
-unified@data$order <- 1:nrow(unified@data)
+shapefile@data$order <- 1:nrow(shapefile@data)
 
-unified@data <- left_join(unified@data, xwalk, by = "UNSDLEA") %>%
+shapefile@data <- left_join(shapefile@data, xwalk, by = "UNSDLEA") %>%
     left_join(auc_by_district, by = "system") %>%
     left_join(accuracy_by_district, by = "system") %>%
     arrange(order) %>%
     as.data.frame()
 
-bins <- c(0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1)
-pal <- colorBin("YlOrRd", domain = unified@data$auc_gbm, bins = bins)
+bins_auc <- c(0, 0.75, 0.8, 0.85, 0.9, 0.95, 1)
+pal_auc <- colorBin("YlOrRd", domain = shapefile@data$auc_max, bins = bins_auc)
 
-labels <- paste(unified$NAME, "<br>", "AUC: ", round5(unified$auc_gbm, 4)) %>%
+labels_auc <- paste(shapefile$NAME, "<br>", "AUC: ", round5(shapefile$auc_max, 4)) %>%
     map(htmltools::HTML)
 
-leaflet(unified) %>%
+leaflet(shapefile) %>%
     addTiles() %>%
-    addPolygons(fillColor = ~pal(auc_gbm),
-        color = "#444444", weight = 1,
+    addPolygons(fillColor = ~pal_auc(auc_max),
+        color = "#444444", weight = 1, fillOpacity = 0.5,
         highlightOptions = highlightOptions(color = "white", weight = 2, bringToFront = TRUE),
-        label = labels) %>%
-    addLegend(pal = pal, values = ~auc_gbm, opacity = 0.7, title = "AUC",
+        label = labels_auc) %>%
+    addLegend(pal = pal_auc, values = ~auc_max, opacity = 0.7, title = "AUC",
         position = "bottomright")
+
+bins_accuracy <- c(70, 75, 80, 85, 90, 95, 100)
+pal_accuracy <- colorBin("YlOrRd", domain = shapefile@data$accuracy_max, bins = bins_accuracy)
+
+labels_accuracy <- paste(shapefile$NAME, "<br>", "Accuracy: ", round5(shapefile$accuracy_max, 4)) %>%
+    map(htmltools::HTML)
+
+leaflet(shapefile) %>%
+    addTiles() %>%
+    addPolygons(fillColor = ~pal_accuracy(accuracy_max),
+        color = "#444444", weight = 1, fillOpacity = 0.5,
+        highlightOptions = highlightOptions(color = "white", weight = 2, bringToFront = TRUE),
+        label = labels_accuracy) %>%
+    addLegend(pal = pal_accuracy, values = ~accuracy_max, opacity = 0.7, title = "Accuracy",
+        position = "bottomright")
+
+# Are we over- or under-predicting ready graduates by system/school?
+# This could be analogous to value-add for ready graduates
+prediction_data_8 %>%
+    group_by(system) %>%
+    summarise_at(c("ready_grad", "pred_gbm", "pred_rpart", "pred_rlda", "pred_nnet", "pred_xgblinear", "pred_xgbtree"),
+        ~ mean(. == "ready"))
+
+prediction_data_8 %>%
+    group_by(system, school) %>%
+    summarise_at(c("ready_grad", "pred_gbm", "pred_rpart", "pred_rlda", "pred_nnet", "pred_xgblinear", "pred_xgbtree"),
+        ~ mean(. == "ready"))
