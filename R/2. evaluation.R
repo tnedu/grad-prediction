@@ -78,9 +78,11 @@ accuracy_by_district <- prediction_data_8 %>%
     arrange(accuracy_max)
 
 accuracy_by_district %>%
+    select(-accuracy_max) %>%
     gather(model, accuracy, starts_with("accuracy")) %>%
     ggplot(aes(x = factor(system), y = accuracy, color = model)) +
         scale_x_discrete(limits = factor(accuracy_by_district$system)) +
+        scale_y_continuous(limits = c(0, 100)) +
         geom_point(alpha = 0.5) +
         theme_minimal() +
         theme(axis.text.x = element_text(angle = 90, hjust = 1),
@@ -105,6 +107,7 @@ auc_by_district <- tibble(
     arrange(auc_max)
 
 auc_by_district %>%
+    select(-auc_max) %>%
     gather(model, auc, starts_with("auc")) %>%
     ggplot(aes(x = factor(system), y = auc, color = model)) +
         scale_x_discrete(limits = factor(auc_by_district$system)) +
@@ -306,7 +309,6 @@ leaflet(shapefile) %>%
     addLegend(pal = pal_accuracy, values = ~accuracy_max, opacity = 0.7, title = "Accuracy",
         position = "bottomright")
 
-
 # Accuracy and AUC by student group -------------------------------------------------------------------------------
 table(prediction_data_8$race, prediction_data_8$ready_grad)
 
@@ -317,24 +319,38 @@ groups_list <- c(split(prediction_data_8, prediction_data_8$race),
 
 accuracy_by_group <- tibble(
     group = names(groups_list),
-    accuracy_gbm = map(groups_list, ~ mean(.$ready_grad == .$pred_gbm)),
-    accuracy_rpart = map(groups_list, ~ mean(.$ready_grad == .$pred_rpart)),
-    accuracy_rlda = map(groups_list, ~ mean(.$ready_grad == .$pred_rlda)),
-    accuracy_nnet = map(groups_list, ~ mean(.$ready_grad == .$pred_nnet)),
-    accuracy_xgblinear = map(groups_list, ~ mean(.$ready_grad == .$pred_xgblinear)),
-    accuracy_xgbtree = map(groups_list, ~ mean(.$ready_grad == .$pred_xgbtree))
+    accuracy_gbm = map_dbl(groups_list, ~ mean(.$ready_grad == .$pred_gbm)),
+    accuracy_rpart = map_dbl(groups_list, ~ mean(.$ready_grad == .$pred_rpart)),
+    accuracy_rlda = map_dbl(groups_list, ~ mean(.$ready_grad == .$pred_rlda)),
+    accuracy_nnet = map_dbl(groups_list, ~ mean(.$ready_grad == .$pred_nnet)),
+    accuracy_xgblinear = map_dbl(groups_list, ~ mean(.$ready_grad == .$pred_xgblinear)),
+    accuracy_xgbtree = map_dbl(groups_list, ~ mean(.$ready_grad == .$pred_xgbtree))
 )
+
+accuracy_by_group %>%
+    gather(model, accuracy, starts_with("accuracy_")) %>%
+    ggplot(aes(x = group, y = accuracy, color = model)) +
+        geom_point() +
+        scale_y_continuous(limits = c(0, 1)) +
+        theme_minimal()
 
 # AUC by student groups
 auc_by_group <- tibble(
     group = names(groups_list),
-    auc_gbm = map(groups_list, roc_auc, ready_grad, prob_gbm),
-    auc_rpart = map(groups_list, roc_auc, ready_grad, prob_rpart),
-    auc_rlda = map(groups_list, roc_auc, ready_grad, prob_rlda),
-    auc_nnet = map(groups_list, roc_auc, ready_grad, prob_nnet),
-    auc_xgblinear = map(groups_list, roc_auc, ready_grad, prob_xgblinear),
-    auc_xgbtree = map(groups_list, roc_auc, ready_grad, prob_xgbtree)
+    auc_gbm = map_dbl(groups_list, roc_auc, ready_grad, prob_gbm),
+    auc_rpart = map_dbl(groups_list, roc_auc, ready_grad, prob_rpart),
+    auc_rlda = map_dbl(groups_list, roc_auc, ready_grad, prob_rlda),
+    auc_nnet = map_dbl(groups_list, roc_auc, ready_grad, prob_nnet),
+    auc_xgblinear = map_dbl(groups_list, roc_auc, ready_grad, prob_xgblinear),
+    auc_xgbtree = map_dbl(groups_list, roc_auc, ready_grad, prob_xgbtree)
 )
+
+auc_by_group %>%
+    gather(model, auc, starts_with("auc_")) %>%
+    ggplot(aes(x = group, y = auc, color = model)) +
+    geom_point() +
+    scale_y_continuous(limits = c(0, 1)) +
+    theme_minimal()
 
 # Accuracy and AUC by school --------------------------------------------------------------------------------------
 ## Accuracy by school
