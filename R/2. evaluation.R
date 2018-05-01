@@ -96,6 +96,7 @@ districts_list <- split(prediction_data_8, prediction_data_8$system)
 
 auc_by_district <- tibble(
     system = as.numeric(names(districts_list)),
+    district_size = map_int(districts_list, nrow),
     auc_gbm = map_dbl(districts_list, roc_auc, ready_grad, prob_gbm),
     auc_rpart = map_dbl(districts_list, roc_auc, ready_grad, prob_rpart),
     auc_rlda = map_dbl(districts_list, roc_auc, ready_grad, prob_rlda),
@@ -119,6 +120,16 @@ auc_by_district %>%
 
 plotly::ggplotly()
 
+# AUC by District Size
+auc_by_district %>%
+    select(-auc_max) %>%
+    gather(model, auc, starts_with("auc_")) %>%
+    ggplot(aes(x = district_size, y = auc)) +
+    geom_point() +
+    facet_wrap(~model, nrow = 3) + 
+    theme_minimal()
+
+
 # Maps of Accuracy and AUC by district ----------------------------------------------------------------------------
 shapefile <- readOGR("data/shapefile/EDGE_SCHOOLDISTRICT_TL17_SY1516/schooldistrict_sy1516_tl17.shp")
 
@@ -130,151 +141,11 @@ shapefile@data$SCSDLEA <- as.character(shapefile@data$SCSDLEA)
 
 shapefile@data$UNSDLEA <- pmax(shapefile$ELSDLEA, shapefile$UNSDLEA, shapefile$SCSDLEA, na.rm = TRUE)
 
-xwalk <- tibble::tribble(
-    ~system, ~UNSDLEA,
-    10, "00090",
-    12, "03240",
-    20, "00180",
-    30, "00240",
-    40, "00270",
-    50, "00300",
-    51, "00060",
-    52, "02700",
-    60, "00330",
-    61, "00690",
-    70, "00420",
-    80, "00450",
-    92, "01890",
-    93, "02010",
-    94, "02790",
-    95, "03900",
-    97, "04490",
-    100, "00510",
-    101, "01110",
-    110, "00570",
-    120, "00600",
-    130, "00630",
-    140, "00660",
-    150, "00750",
-    151, "03210",
-    160, "00780",
-    161, "02610",
-    162, "04200",
-    170, "00850",
-    180, "00900",
-    190, "03180",
-    200, "00960",
-    210, "00990",
-    220, "01020",
-    230, "01050",
-    231, "01080",
-    240, "01170",
-    250, "01230",
-    260, "01290",
-    271, "01950",
-    272, "02970",
-    273, "04100",
-    274, "01390",
-    275, "01400",
-    280, "01410",
-    290, "01440",
-    300, "01470",
-    301, "01500",
-    310, "01530",
-    320, "00001",
-    330, "01590",
-    340, "01620",
-    350, "01650",
-    360, "01680",
-    370, "01740",
-    371, "03660",
-    380, "01770",
-    390, "01800",
-    391, "02460",
-    400, "01830",
-    401, "03360",
-    410, "01860",
-    420, "01920",
-    430, "01980",
-    440, "02070",
-    450, "02100",
-    460, "02160",
-    470, "02220",
-    480, "02280",
-    490, "02310",
-    500, "02340",
-    510, "02430",
-    520, "02490",
-    521, "01200",
-    530, "02520",
-    531, "02400",
-    540, "02820",
-    541, "00120",
-    542, "01140",
-    550, "02880",
-    560, "02550",
-    570, "02580",
-    580, "02640",
-    581, "03540",
-    590, "02670",
-    600, "02760",
-    610, "02910",
-    620, "03000",
-    621, "04050",
-    630, "03030",
-    640, "03060",
-    650, "03090",
-    660, "03270",
-    661, "04260",
-    670, "03330",
-    680, "03390",
-    690, "03420",
-    700, "03450",
-    710, "03480",
-    720, "03510",
-    721, "00930",
-    730, "03590",
-    740, "03600",
-    750, "03690",
-    760, "03720",
-    761, "03300",
-    770, "03750",
-    780, "03780",
-    792, "00148",
-    793, "00152",
-    794, "00153",
-    795, "00149",
-    796, "00151",
-    798, "00150",
-    800, "03870",
-    810, "03960",
-    820, "03990",
-    821, "00360",
-    822, "02190",
-    830, "04020",
-    840, "04080",
-    850, "04170",
-    860, "04230",
-    870, "04290",
-    880, "04320",
-    890, "04350",
-    900, "04380",
-    901, "02130",
-    910, "04440",
-    920, "04470",
-    930, "04500",
-    940, "04530",
-    941, "01260",
-    950, "04550",
-    951, "02370"
-)
-
-shapefile@data$order <- 1:nrow(shapefile@data)
+xwalk <- read_csv("data/nces_district_crosswalk.csv")
 
 shapefile@data <- left_join(shapefile@data, xwalk, by = "UNSDLEA") %>%
     left_join(auc_by_district, by = "system") %>%
     left_join(accuracy_by_district, by = "system") %>%
-    arrange(order) %>%
     as.data.frame()
 
 # AUC map by district
@@ -374,6 +245,7 @@ safely_auc <- safely(roc_auc, otherwise = NA_real_)
 
 auc_by_school <- tibble(
     school = names(schools_list),
+    school_size = map_int(schools_list, nrow),
     auc_gbm = map(schools_list, safely_auc, ready_grad, prob_gbm) %>% map_dbl("result"),
     auc_rpart = map(schools_list, safely_auc, ready_grad, prob_rpart) %>% map_dbl("result"),
     auc_rlda = map(schools_list, safely_auc, ready_grad, prob_rlda) %>% map_dbl("result"),
@@ -411,3 +283,12 @@ leaflet(shapefile) %>%
         label = labels_diffs) %>%
     addLegend(pal = pal_diffs, values = ~diff, opacity = 0.7, title = "Ready Grad - Predicted Percentile",
         position = "bottomright")
+
+# AUC by School Size
+auc_by_school %>%
+    select(-auc_max) %>%
+    gather(model, auc, starts_with("auc_")) %>%
+    ggplot(aes(x = school_size, y = auc)) +
+        geom_point() +
+        facet_wrap(~model, nrow = 3) + 
+        theme_minimal()
