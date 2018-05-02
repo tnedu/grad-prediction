@@ -8,6 +8,14 @@ models/
 # Data
 data/
 
+# Papers
+literature/
+
+# Presentation files
+presentations/*.css
+presentations/*.html
+presentations/presentation_files/
+
 # History files
 .Rhistory
 .Rapp.history
