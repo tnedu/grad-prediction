@@ -5,16 +5,16 @@ library(doParallel)
 library(yardstick)
 
 prediction_data_8 <- read_csv("data/prediction_data_8.csv",
-        col_types = "idciiiiiiiiiiiiiiiiiiidddcciiiiiiiddddddd") %>%
+        col_types = "idciiiiiiiiiiiiiiiiiiiidddcciiiiiiiddddddd") %>%
     filter(!is.na(scale_score_mt) & !is.na(scale_score_rd) & !is.na(ready_grad)) %>%
     mutate(ready_grad = factor(if_else(ready_grad == 1, "ready", "not_ready"))) %>%
-    select(cohort, ready_grad, n_absences, 
+    select(cohort, ready_grad, n_absences, enrollments,
         E, I, R, S, assault, weapons, theft_vandalism, sexual_assault_harassment, drugs_alcohol,
         threat, school_rules, bullying, fighting,
         scale_score_mt, scale_score_mt_sq, scale_score_rd, scale_score_rd_sq,
         school_scale_score_mt, school_scale_score_rd, school_chronic_abs)
 
-predictors <- c("n_absences", "E", "I", "R", "S", "assault", "weapons",
+predictors <- c("n_absences", "enrollments", "E", "I", "R", "S", "assault", "weapons",
     "theft_vandalism", "sexual_assault_harassment", "drugs_alcohol", "threat", "school_rules", "bullying", "fighting",
     "scale_score_mt", "scale_score_mt_sq", "scale_score_rd", "scale_score_rd_sq",
     "school_scale_score_mt", "school_scale_score_rd", "school_chronic_abs")
@@ -76,7 +76,7 @@ fit_list <- map(names(model_list), function(m) {
     model_args <- c(global_args, method = m) # create a new argument object, use method here
     model <- tryCatch(do.call(train, model_args), error = function(e) NULL)
 
-    # write_rds(model, paste0("models/grade_8_", m, ".rds"))
+    write_rds(model, paste0("models/grade_8_", m, ".rds"))
 
     message("Model method: ", m, " completed.")
 

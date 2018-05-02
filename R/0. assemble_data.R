@@ -31,9 +31,21 @@ cohort_2011 <- read_dta("N:/ORP_accountability/data/2015_graduation_rate/grad_st
     left_join(ready_grad_2011, by = "student_key") %>%
     mutate(ready_grad = if_else(on_time_grad == 0, 0L, ready_grad))
 
+# Count school enrollments in a year and assign each student in cohort to a school
 school_assignment <- function(file, gr) {
 
-    read_delim(file, delim = "\t") %>%
+    enrollments <- read_delim(file, delim = "\t") %>%
+        clean_names() %>%
+        filter(grade == gr) %>%
+        select(district_no, school_no, student_key) %>%
+        distinct() %>%
+        group_by(student_key) %>%
+        add_count() %>%
+        ungroup() %>%
+        transmute(student_key = as.integer(student_key), enrollments = n) %>%
+        distinct()
+    
+    assignment <- read_delim(file, delim = "\t") %>%
         clean_names() %>%
         filter(grade == gr) %>%
         transmute(system = district_no, school = school_no, grade,
@@ -51,7 +63,9 @@ school_assignment <- function(file, gr) {
         filter(temp == 1) %>%
         ungroup() %>% 
         select(system, school, grade, student_key)
-        
+    
+    left_join(assignment, enrollments, by = "student_key")
+    
 }
 
 c(sch_8_2012, sch_7_2012, sch_6_2012, sch_8_2011, sch_7_2011, sch_6_2011) %<-% map2(
@@ -61,6 +75,7 @@ c(sch_8_2012, sch_7_2012, sch_6_2012, sch_8_2011, sch_7_2011, sch_6_2011) %<-% m
            "08", "07", "06"),
     .f = school_assignment)
 
+# Count absences for each student in cohort
 student_absences <- function(file, gr) {
     
     read_delim(file, delim = "\t") %>%
@@ -98,6 +113,7 @@ c(abs_8_2012, abs_7_2012, abs_6_2012, abs_8_2011, abs_7_2011, abs_6_2011) %<-% m
            "08", "07", "06"),
     .f = student_absences)
 
+# Count disciplinary incidents and reasons for each student in cohort
 student_discipline <- function(file, gr) {
     
     discipline <- read_delim(file, delim = "\t") %>% 
@@ -134,16 +150,17 @@ c(discipline_8_2012, discipline_7_2012, discipline_6_2012, discipline_8_2011, di
     .f = student_discipline
 )
 
+# Test scores for each student in cohort
 student_tests <- function(file, gr) {
     
     read_dta(file) %>%
         filter(!is.na(stud_id),
             MAAS_test_achiev == 0,
             !is.na(ssrd) | !is.na(ssmt) | !is.na(sssc)) %>%
-        # Drop duplicates
+    # Drop duplicates
         add_count(stud_id) %>%
         filter(n == 1) %>%
-        # Standardized scale scores by subject
+    # Standardized scale scores by subject
         group_by(grade_tested_achiev_rd) %>%
         mutate(scale_score_rd = scale(ssrd)) %>%
         group_by(grade_tested_achiev_mt) %>% 
@@ -168,10 +185,10 @@ c(tests_8_2012, tests_7_2012, tests_6_2012, tests_8_2011, tests_7_2011) %<-% map
 tests_6_2011 <- read_dta("N:/Research and Policy/data/TNCRED/TCAP/TCAP_2008-09.dta") %>%
     filter(!is.na(stud_id),
         !is.na(ssrd) | !is.na(ssmt) | !is.na(sssc)) %>%
-    # Drop duplicates
+# Drop duplicates
     add_count(stud_id) %>%
     filter(n == 1) %>%
-    # Standardized scale scores by subject
+# Standardized scale scores by subject
     group_by(grade_tested_achiev_rd) %>%
     mutate(scale_score_rd = scale(ssrd)) %>%
     group_by(grade_tested_achiev_mt) %>% 
@@ -183,27 +200,33 @@ tests_6_2011 <- read_dta("N:/Research and Policy/data/TNCRED/TCAP/TCAP_2008-09.d
     transmute(student_key = as.integer(stud_id),
         scale_score_rd, scale_score_mt, scale_score_sc)
 
-tests_alg_8_2012 <- read_dta("N:/Research and Policy/data/TNCRED/TCAP/TCAP_2011-12.dta") %>%
+tests_alg_2012 <- read_dta("N:/Research and Policy/data/TNCRED/TCAP/TCAP_2011-12.dta") %>%
     filter(algI == 1) %>%
+# Drop duplicates
+    add_count(stud_id) %>%
+    filter(n == 1) %>%
     group_by(EOC_sem) %>%
     mutate(ss_EOC = scale(ss_EOC)) %>%
     ungroup() %>%
     transmute(student_key = as.integer(stud_id), ss_EOC)
 
-tests_alg_8_2011 <- read_dta("N:/Research and Policy/data/TNCRED/TCAP/TCAP_2010-11.dta") %>%
+tests_alg_2011 <- read_dta("N:/Research and Policy/data/TNCRED/TCAP/TCAP_2010-11.dta") %>%
     filter(algI == 1) %>%
+# Drop duplicates
+    add_count(stud_id) %>%
+    filter(n == 1) %>%
     group_by(EOC_sem) %>%
     mutate(ss_EOC = scale(ss_EOC)) %>%
     ungroup() %>%
     transmute(student_key = as.integer(stud_id), ss_EOC)
 
 tests_8_2012 <- tests_8_2012 %>%
-    left_join(tests_alg_8_2012, by = "student_key") %>%
+    left_join(tests_alg_2012, by = "student_key") %>%
     mutate(scale_score_mt = if_else(is.na(scale_score_mt) & !is.na(ss_EOC), ss_EOC, scale_score_mt)) %>%
     select(-ss_EOC)
 
 tests_8_2011 <- tests_8_2011 %>%
-    left_join(tests_alg_8_2011, by = "student_key") %>%
+    left_join(tests_alg_2011, by = "student_key") %>%
     mutate(scale_score_mt = if_else(is.na(scale_score_mt) & !is.na(ss_EOC), ss_EOC, scale_score_mt)) %>%
     select(-ss_EOC)
 
@@ -229,12 +252,32 @@ c(demo_8_2012, demo_7_2012, demo_6_2012, demo_8_2011, demo_7_2011, demo_6_2011) 
     .f = student_demo
 )
 
-prediction_data_8 <- bind_rows(mutate(abs_8_2012, cohort = 2012), mutate(abs_8_2011, cohort = 2011)) %>%
-    left_join(bind_rows(sch_8_2012, sch_8_2011), by = c("student_key", "grade")) %>%
-    left_join(bind_rows(discipline_8_2012, discipline_8_2011), by = c("student_key", "grade")) %>%
-    left_join(bind_rows(tests_8_2012, tests_8_2011), by = "student_key") %>%
-    left_join(bind_rows(demo_8_2012, demo_8_2011), by = "student_key") %>%
-    left_join(bind_rows(cohort_2012, cohort_2011), by = "student_key") %>%
+# Add cohort variable to each df
+c(abs_8_2012, sch_8_2012, discipline_8_2012, tests_8_2012, demo_8_2012, cohort_2012,
+  abs_7_2012, sch_7_2012, discipline_7_2012, tests_7_2012, demo_7_2012,
+  abs_6_2012, sch_6_2012, discipline_6_2012, tests_6_2012, demo_6_2012) %<-% map(
+    .x = list(abs_8_2012, sch_8_2012, discipline_8_2012, tests_8_2012, demo_8_2012, cohort_2012,
+        abs_7_2012, sch_7_2012, discipline_7_2012, tests_7_2012, demo_7_2012,
+        abs_6_2012, sch_6_2012, discipline_6_2012, tests_6_2012, demo_6_2012),
+    .f = function(df) mutate(df, cohort = 2012)
+)
+
+c(abs_8_2011, sch_8_2011, discipline_8_2011, tests_8_2011, demo_8_2011, cohort_2011,
+  abs_7_2011, sch_7_2011, discipline_7_2011, tests_7_2011, demo_7_2011,
+  abs_6_2011, sch_6_2011, discipline_6_2011, tests_6_2011, demo_6_2011) %<-% map(
+    .x = list(abs_8_2011, sch_8_2011, discipline_8_2011, tests_8_2011, demo_8_2011, cohort_2011,
+        abs_7_2011, sch_7_2011, discipline_7_2011, tests_7_2011, demo_7_2011,
+        abs_6_2011, sch_6_2011, discipline_6_2011, tests_6_2011, demo_6_2011),
+    .f = function(df) mutate(df, cohort = 2011)
+  )
+
+# Two cohorts for 8th grade prediction
+prediction_data_8 <- bind_rows(abs_8_2012, abs_8_2011) %>%
+    left_join(bind_rows(sch_8_2012, sch_8_2011), by = c("student_key", "grade", "cohort")) %>%
+    left_join(bind_rows(discipline_8_2012, discipline_8_2011), by = c("student_key", "grade", "cohort")) %>%
+    left_join(bind_rows(tests_8_2012, tests_8_2011), by = c("student_key", "cohort")) %>%
+    left_join(bind_rows(demo_8_2012, demo_8_2011), by = c("student_key", "cohort")) %>%
+    left_join(bind_rows(cohort_2012, cohort_2011), by = c("student_key", "cohort")) %>%
 # Drop students who tranfer out
     filter(!withdrawalreason %in% c(2, 5, 6, 8, 10, 17)) %>%
     mutate_at(c("E", "I", "R", "S",
@@ -255,12 +298,13 @@ prediction_data_8 <- bind_rows(mutate(abs_8_2012, cohort = 2012), mutate(abs_8_2
 
 write_csv(prediction_data_8, path = "data/prediction_data_8.csv")
 
-prediction_data_7 <- bind_rows(mutate(abs_7_2012, cohort = 2012), mutate(abs_7_2011, cohort = 2011)) %>%
-    left_join(bind_rows(sch_7_2012, sch_7_2011), by = "student_key") %>%
-    left_join(bind_rows(discipline_7_2012, discipline_7_2011), by = "student_key") %>%
-    left_join(bind_rows(tests_7_2012, tests_7_2011), by = "student_key") %>%
-    left_join(bind_rows(demo_7_2012, demo_7_2011), by = "student_key") %>%
-    left_join(bind_rows(cohort_2012, cohort_2011), by = "student_key") %>%
+# Two cohorts for 7th grade prediction
+prediction_data_7 <- bind_rows(abs_7_2012, abs_7_2011) %>%
+    left_join(bind_rows(sch_7_2012, sch_7_2011), by = c("student_key", "grade", "cohort")) %>%
+    left_join(bind_rows(discipline_7_2012, discipline_7_2011), by = c("student_key", "grade", "cohort")) %>%
+    left_join(bind_rows(tests_7_2012, tests_7_2011), by = c("student_key", "cohort")) %>%
+    left_join(bind_rows(demo_7_2012, demo_7_2011), by = c("student_key", "cohort")) %>%
+    left_join(bind_rows(cohort_2012, cohort_2011), by = c("student_key", "cohort")) %>%
 # Drop students who tranfer out
     filter(!withdrawalreason %in% c(2, 5, 6, 8, 10, 17)) %>%
     mutate_at(c("E", "I", "R", "S",
@@ -281,12 +325,13 @@ prediction_data_7 <- bind_rows(mutate(abs_7_2012, cohort = 2012), mutate(abs_7_2
 
 write_csv(prediction_data_7, path = "data/prediction_data_7.csv")
 
-prediction_data_6 <- bind_rows(mutate(abs_6_2012, cohort = 2012), mutate(abs_6_2011, cohort = 2011)) %>%
-    left_join(bind_rows(sch_6_2012, sch_6_2011), by = "student_key") %>%
-    left_join(bind_rows(discipline_6_2012, discipline_6_2011), by = "student_key") %>%
-    left_join(bind_rows(tests_6_2012, tests_6_2011), by = "student_key") %>%
-    left_join(bind_rows(demo_6_2012, demo_6_2011), by = "student_key") %>%
-    left_join(bind_rows(cohort_2012, cohort_2011), by = "student_key") %>%
+# Two cohorts for 6th grade prediction
+prediction_data_6 <- bind_rows(abs_6_2012, abs_6_2011) %>%
+    left_join(bind_rows(sch_6_2012, sch_6_2011), by = c("student_key", "grade", "cohort")) %>%
+    left_join(bind_rows(discipline_6_2012, discipline_6_2011), by = c("student_key", "grade", "cohort")) %>%
+    left_join(bind_rows(tests_6_2012, tests_6_2011), by = c("student_key", "cohort")) %>%
+    left_join(bind_rows(demo_6_2012, demo_6_2011), by = c("student_key", "cohort")) %>%
+    left_join(bind_rows(cohort_2012, cohort_2011), by = c("student_key", "cohort")) %>%
 # Drop students who tranfer out
     filter(!withdrawalreason %in% c(2, 5, 6, 8, 10, 17)) %>%
     mutate_at(c("E", "I", "R", "S",
