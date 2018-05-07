@@ -87,7 +87,7 @@ fit_list <- map(names(model_list), function(m) {
     }
 )
 
-# Extract Test Accuracies
+# Extract test Accuracies
 accuracy_list <- map(fit_list, predict, test_x) %>%
     map(~ . == test_y) %>%
     map_dbl(mean, na.rm = TRUE)
@@ -104,9 +104,11 @@ names(ready_probs) <- methods_list
 probs_df <- as_tibble(ready_probs) %>%
     mutate(truth = test_y)
 
-roc_auc(probs_df, truth = truth, gbm)
-roc_auc(probs_df, truth = truth, rpart)
-roc_auc(probs_df, truth = truth, rlda)
-roc_auc(probs_df, truth = truth, nnet)
-roc_auc(probs_df, truth = truth, xgbLinear)
-roc_auc(probs_df, truth = truth, xgbTree)
+# Extract test AUC
+auc_list <- map_dbl(
+    .x = list(quote(gbm), quote(rpart), quote(rlda), quote(nnet), quote(xgbLinear), quote(xgbTree)),
+    .f = ~ roc_auc(probs_df, truth = truth, !!.)
+)
+
+names(auc_list) <- methods_list
+auc_list
