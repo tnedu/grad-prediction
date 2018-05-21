@@ -2,6 +2,9 @@
 reprex.R
 prediction_data_8.csv
 
+# EWS Plot
+ewsplot/
+
 # Trained Models
 models/
 
@@ -14,6 +17,7 @@ literature/
 # Presentation files
 presentations/*.css
 presentations/*.html
+presentations/images/
 presentations/presentation_files/
 
 # History files
