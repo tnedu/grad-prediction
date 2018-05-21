@@ -1,0 +1,1036 @@
+---
+title: "Predicting Ready Graduates"
+author: "<br> Alexander Poon <br> Tennessee Department of Education"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+    xaringan::moon_reader:
+        css: ["mtheme_max.css", "fonts_mtheme_max.css"]
+        nature:
+            ratio: "16:9"
+            countIncrementalSlides: false
+---
+
+``` {r setup, include = FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+
+library(caret)
+library(tidyverse)
+library(yardstick)
+library(rgdal)
+library(leaflet)
+library(zeallot)
+
+evaluation_data_8 <- read_csv("../data/evaluation_data_8.csv") %>%
+    mutate_at(vars("ready_grad", "pred_gbm", "pred_rpart", "pred_rlda", "pred_nnet", "pred_xgblinear", "pred_xgbtree"), factor)
+
+shapefile <- readOGR("../data/shapefile/EDGE_SCHOOLDISTRICT_TL17_SY1516/schooldistrict_sy1516_tl17.shp")
+
+shapefile <- shapefile[shapefile$STATEFP == "47", ]
+
+shapefile@data$UNSDLEA <- as.character(shapefile@data$UNSDLEA)
+shapefile@data$ELSDLEA <- as.character(shapefile@data$ELSDLEA)
+shapefile@data$SCSDLEA <- as.character(shapefile@data$SCSDLEA)
+
+shapefile@data$UNSDLEA <- pmax(shapefile$ELSDLEA, shapefile$UNSDLEA, shapefile$SCSDLEA, na.rm = TRUE)
+
+xwalk <- read_csv("../data/nces_district_crosswalk.csv")
+```
+
+# Motivation
+
+.font120[
+- Bridge to Postsecondary priority to ensure that high school graduates are ready to pursue a postsecondary credential.
+- Addition of ready graduates (on-time grad w/ 21+ ACT composite score) indicator to accountability.
+- Following Dropout Early Warning Systems in WI and Chicago, looking to create a system to predict ready graduates.
+]
+
+---
+
+layout: false
+class: inverse, middle, center
+
+# Ready Graduation in TN
+
+---
+
+# Graduation Rates and Ready Graduates
+
+Ready Graduation rates lag behind Graduation Rates in Tennessee:
+
+``` {r}
+tribble(~Year, ~metric, ~`y`,
+    2017, "Graduation Rate", 89.1,
+    2016, "Graduation Rate", 88.5,
+    2015, "Graduation Rate", 87.9,
+    2014, "Graduation Rate", 87.2,
+    2013, "Graduation Rate", 86.4,
+    2017, "Ready Graduate", 42.1,
+    2016, "Ready Graduate", 41.9,
+    2015, "Ready Graduate", 39,
+    2014, "Ready Graduate", 39.2,
+    2013, "Ready Graduate", 38.4
+) %>%
+    ggplot(aes(x = Year, y = y, group = metric)) +
+        geom_point(aes(color = metric)) +
+        geom_line(aes(color = metric)) +
+        geom_text(aes(label = y), vjust = -1) +
+        scale_y_continuous(name = "Percent Ready Graduates", limits = c(0, 100)) +
+        theme_minimal() +
+        theme(axis.title.x = element_blank(),
+            legend.title = element_blank(), legend.position = "bottom")
+```
+
+---
+
+# Ready Graduation by Student Groups
+
+There are wide discrepancies across student groups in ready graduation rates:
+
+``` {r}
+haven::read_dta("N:/ORP_accountability/data/2017_ACT/ACT_state2018_appeals2.dta") %>%
+    filter(!grepl("Non-", subgroup)) %>%
+    mutate(subgroup = if_else(subgroup == "English Language Learners with T1/T2", "English Learners", subgroup)) %>% 
+    ggplot(aes(x = subgroup, y = pct_21_orhigher)) +
+        geom_bar(stat = "identity") +
+        geom_text(aes(label = pct_21_orhigher), vjust = -1) +
+        scale_y_continuous(name = "2017 Percent Ready Graduates", limits = c(0, 100)) +
+        theme_minimal() +
+        theme(axis.text.x = element_text(angle = 90, hjust = 1),
+            axis.title.x = element_blank())
+```
+
+---
+
+# Ready Graduation by District
+
+Districts with highest and lowest percentage of ready graduates:
+
+.pull-left[
+``` {r}
+act_2017_district <- haven::read_dta("N:/ORP_accountability/data/2017_ACT/ACT_district2018_appeals2.dta") %>%
+    filter(subgroup == "All Students", valid_tests >= 30) %>%
+    transmute(system = as.integer(system), pct_21_orhigher)
+
+act_2017_district %>%
+    arrange(desc(pct_21_orhigher)) %>%
+    slice(1:10) %>%
+    knitr::kable(col.names = c("District", "% Ready Grads"), format = "html")
+```
+]
+.pull-right[
+``` {r}
+act_2017_district %>%
+    arrange(pct_21_orhigher) %>%
+    slice(1:10) %>%
+    arrange(desc(pct_21_orhigher)) %>%
+    knitr::kable(col.names = c("District", "% Ready Grads"), format = "html")
+```
+]
+
+---
+
+# Ready Graduation by District
+
+``` {r}
+shapefile@data <- left_join(shapefile@data, xwalk, by = "UNSDLEA") %>%
+    left_join(act_2017_district, by = "system") %>%
+    as.data.frame()
+
+# Quantiles of x
+pal_act_21 <- colorQuantile("YlOrRd", domain = shapefile@data$pct_21_orhigher, n = 5)
+
+labels_act_21 <- paste(shapefile$NAME, "<br>", "2017 Percent Ready Graduates: ", shapefile$pct_21_orhigher) %>%
+    map(htmltools::HTML)
+
+leaflet(shapefile) %>%
+    addTiles() %>%
+    addPolygons(fillColor = ~pal_act_21(pct_21_orhigher),
+        color = "#444444", weight = 1, fillOpacity = 0.5,
+        highlightOptions = highlightOptions(color = "white", weight = 2, bringToFront = TRUE),
+        label = labels_act_21)
+```
+
+---
+
+# Ready Graduation by School
+
+Tennessee has high schools at all levels of ready graduation:
+
+``` {r}
+haven::read_dta("N:/ORP_accountability/data/2017_ACT/ACT_school2018_appeals2.dta") %>%
+    filter(subgroup == "All Students", valid_tests >= 30) %>%
+    arrange(pct_21_orhigher) %>%
+    ggplot(aes(x = 1:nrow(.), y = pct_21_orhigher)) +
+        geom_bar(stat = "identity", width = 1) +
+        scale_y_continuous(name = "2017 Percent Ready Graduates", limits = c(0, 100)) +
+        theme_minimal() +
+        theme(axis.title.x = element_blank(), axis.text.x = element_blank())
+```
+
+---
+
+layout: false
+class: inverse, middle, center
+
+# Predicting Ready Graduation
+
+---
+
+# Machine Learning
+
+From [Wikipedia](https://en.wikipedia.org/wiki/Machine_learning):
+
+[A] field of computer science that uses statistical techniques to give computer systems the ability to "learn" (i.e., progressively improve performance on a specific task) with data, without being explicitly programmed.
+
+---
+
+# Machine Learning
+
+The 'task' we want to 'learn' is to identify ready graduates based on information about students in 6th/7th/8th grades.
+
+.pull-left[
+| Absences |  Math Score |  ELA Score  | ... |
+|----------|-------------|-------------|-----|
+|     1    | Below Basic |   Basic     | ... |
+|    20    |    Basic    | Proficient  | ... |
+|     5    |    Basic    |   Basic     | ... |
+|     0    |   Advanced  | Proficient  | ... |
+|     2    |   Advanced  |  Advanced   | ... |
+|    10    |    Basic    |  Advanced   | ... |
+|     0    |  Proficient | Proficient  | ... |
+|     3    | Below Basic | Below Basic | ... |
+|    10    |    Basic    |  Advanced   | ... |
+|    45    |  Proficient |  Advanced   | ... |
+]
+
+.pull-right[
+| Ready Graduate |
+|----------------|
+|    not ready   |
+|    not ready   |
+|    not ready   |
+|      ready     |
+|      ready     |
+|    not ready   |
+|      ready     |
+|    not ready   |
+|      ready     |
+|    not ready   |
+]
+
+---
+
+# Machine Learning
+
+To do this, I look at which 6th/7th/8th graders have ended up as ready graduates in the past and use this information to predict ready graduation for future cohorts.
+
+I 'train' a model with the 2015 graduating cohort and predict on the 2016 graduating cohort so that I can check prediction accuracy.
+
+---
+
+# Predictors
+
+I use the following predictors for students in 6th, 7th, and 8th grades:
+
+.font120[
+- TCAP Scores
+- Disciplinary Issues (Suspensions/Expulsions/Reasons)
+- Absenteeism (# days)
+- Mobility (# of schools enrolled)
+- School aggregates of above
+]
+
+--
+
+Also considered:
+
+.font120[
+- Course Grades
+- Demographics
+]
+
+---
+
+# Predictor Considerations
+
+.font120[
+- Using multiple years of data results in missingness as students enter and leave the state
+- Need to have complete coverage for the state (grades)
+- Need to have data going back at least 5 years (grades)
+- Don't want to bias against certain groups of students (demographics)
+]
+
+---
+
+layout: false
+class: inverse, middle, center
+
+# Models
+
+---
+
+# Model Example
+
+Fitting a logistic regression model:
+
+``` {r, echo = TRUE, eval = FALSE}
+# Predictors
+predictors <- c("n_absences", "enrollments", "E", "I", "R", "S", "assault", "weapons", "theft_vandalism",
+    "sexual_assault_harassment", "drugs_alcohol", "threat", "school_rules", "bullying", "fighting",
+    "scale_score_mt", "scale_score_mt_sq", "scale_score_rd", "scale_score_rd_sq",
+    "school_scale_score_mt", "school_scale_score_rd", "school_chronic_abs")
+
+# Train a model on one cohort and test predictions on second
+c(train_set, test_set) %<-% split(prediction_data_8, prediction_data_8$cohort)
+
+train_x <- train_set[predictors]
+train_y <- train_set$ready_grad
+
+# Fit a model on train set
+model_logistic <- train(x = train_x, y = train_y,
+    method = "glm", family = "binomial")
+```
+
+---
+
+# Extracting Predictions from a Model
+
+Use the fitted model to assign a probability that each student in the test set will be a ready graduate:
+
+``` {r, echo = TRUE, eval = FALSE}
+test_set$probs_logistic <- predict(model_logistic, test_x, type = "prob")$ready
+
+ggplot(test_set, aes(x = ready_grad, y = probs_logistic)) + geom_jitter(alpha = 0.1) + theme_minimal()
+```
+
+``` {r, include = FALSE}
+model_logistic <- read_rds("../models/grade_8_glm.rds")
+
+prediction_data_8 <- read_csv("../data/prediction_data_8.csv",
+        col_types = "idciiiiiiiiiiiiiiiiiiiidddcciiiiiiiddddddd") %>%
+    filter(!is.na(scale_score_mt) & !is.na(scale_score_rd) & !is.na(ready_grad)) %>%
+    mutate(ready_grad = factor(if_else(ready_grad == 1, "ready", "not_ready"))) %>%
+    select(cohort, ready_grad, n_absences, enrollments,
+        E, I, R, S, assault, weapons, theft_vandalism, sexual_assault_harassment, drugs_alcohol,
+        threat, school_rules, bullying, fighting,
+        scale_score_mt, scale_score_mt_sq, scale_score_rd, scale_score_rd_sq,
+        school_scale_score_mt, school_scale_score_rd, school_chronic_abs)
+
+predictors <- c("n_absences", "enrollments", "E", "I", "R", "S", "assault", "weapons", "theft_vandalism",
+    "sexual_assault_harassment", "drugs_alcohol", "threat", "school_rules", "bullying", "fighting",
+    "scale_score_mt", "scale_score_mt_sq", "scale_score_rd", "scale_score_rd_sq",
+    "school_scale_score_mt", "school_scale_score_rd", "school_chronic_abs")
+
+c(train_set, test_set) %<-% (split(prediction_data_8, prediction_data_8$cohort) %>% map(as.data.frame))
+
+train_y <- train_set$ready_grad
+train_x <- train_set[predictors]
+test_y <- test_set$ready_grad
+test_x <- test_set[predictors]
+
+# Preprocess by centering, scaling, and removing zero-variance predictors
+train_preprocess <- preProcess(train_x, method = c("scale", "center", "zv"))
+
+train_x <- predict(train_preprocess, train_x)
+test_x <- predict(train_preprocess, test_x)
+
+test_x <- test_set[predictors]
+test_y <- test_set$ready_grad
+
+test_set$probs_logistic <- predict(model_logistic, test_x, type = "prob")$ready
+
+ggplot(test_set, aes(x = ready_grad, y = probs_logistic)) + geom_jitter(alpha = 0.1) + theme_minimal()
+```
+
+---
+
+# Extracting Predictions from a Model
+
+The model predicts that any student with `p > 0.5` is a ready graduate:
+
+``` {r}
+ggplot(test_set, aes(x = ready_grad, y = probs_logistic)) +
+    geom_jitter(alpha = 0.1) +
+    geom_hline(yintercept = 0.5) +
+    theme_minimal()
+```
+
+---
+
+# Extracting Predictions from a Model
+
+Use the fitted model to predict on the test set and create a confusion matrix:
+
+``` {r, echo = TRUE}
+preds_logistic <- predict(model_logistic, test_x)
+confusionMatrix(preds_logistic, test_y)
+```
+
+---
+
+# Extracting Predictions from a Model
+
+What does it look like for an 8th grader to have a **90 percent** predicted probability of ready graduation?
+
+.pull-left[
+``` {r}
+student_90 <- test_set %>%
+    filter(round(probs_logistic, 2) == 0.9) %>%
+    sample_n(1) %>%
+    select(n_absences, enrollments, E, I, R, S, assault, weapons, theft_vandalism, sexual_assault_harassment,
+        drugs_alcohol, threat, school_rules, bullying, fighting, scale_score_mt, scale_score_rd,
+        school_scale_score_mt, school_scale_score_rd, school_chronic_abs) %>%
+    gather(predictor, value)
+    
+student_90 %>%
+    slice(1:10) %>%
+    knitr::kable(format = "html", digits = 2)
+```
+]
+
+.pull-right[
+``` {r}
+student_90 %>%
+    slice(11:20) %>%
+    knitr::kable(format = "html", digits = 2)
+```
+]
+
+---
+
+# Extracting Predictions from a Model
+
+What does it look like for an 8th grader to have a **50 percent** predicted probability of ready graduation?
+
+.pull-left[
+``` {r}
+student_50 <- test_set %>%
+    filter(round(probs_logistic, 2) == 0.5) %>%
+    sample_n(1) %>%
+    select(n_absences, enrollments, E, I, R, S, assault, weapons, theft_vandalism, sexual_assault_harassment,
+        drugs_alcohol, threat, school_rules, bullying, fighting, scale_score_mt, scale_score_rd,
+        school_scale_score_mt, school_scale_score_rd, school_chronic_abs) %>%
+    gather(predictor, value)
+    
+student_50 %>%
+    slice(1:10) %>%
+    knitr::kable(format = "html", digits = 2)
+```
+]
+
+.pull-right[
+``` {r}
+student_50 %>%
+    slice(11:20) %>%
+    knitr::kable(format = "html", digits = 2)
+```
+]
+
+---
+
+# Extracting Predictions from a Model
+
+What does it look like for an 8th grader to have a **10 percent** predicted probability of ready graduation?
+
+.pull-left[
+``` {r}
+student_10 <- test_set %>%
+    filter(round(probs_logistic, 2) == 0.1) %>%
+    sample_n(1) %>%
+    select(n_absences, enrollments, E, I, R, S, assault, weapons, theft_vandalism, sexual_assault_harassment,
+        drugs_alcohol, threat, school_rules, bullying, fighting, scale_score_mt, scale_score_rd,
+        school_scale_score_mt, school_scale_score_rd, school_chronic_abs) %>%
+    gather(predictor, value)
+    
+student_10 %>%
+    slice(1:10) %>%
+    knitr::kable(format = "html", digits = 2)
+```
+]
+
+.pull-right[
+``` {r}
+student_10 %>%
+    slice(11:20) %>%
+    knitr::kable(format = "html", digits = 2)
+```
+]
+
+---
+
+# Model Example
+
+We can look at the relative importance of the predictors in predicting ready graduation:
+
+```{r}
+ggplot(varImp(model_logistic)) + theme_minimal()
+```
+
+---
+
+# Other Models
+
+Repeat with other models:
+
+.font120[
+- `gbm` (gradient boosting machine)
+- `rpart` (recursive partitioning/decision tree)
+- `rlda` (regularized linear discriminant analysis)
+- `nnet` (neural network)
+- `xgbLinear` (extreme gradient boosting w/ logistic regression)
+- `xgbTree` (extreme gradient boosting w/ trees)
+]
+
+Just replace `method` in the call to `train`:
+
+``` {r, echo = TRUE, eval = FALSE}
+train(x = train_x, y = train_y, method = "", ...)
+```
+
+---
+
+# Other Models
+
+Model descriptions (Applied Predictive Modeling, Kuhn & Johnson (2013)):
+
+.font120[
+- `gbm` (gradient boosting machine)
+]
+
+The basic principle of boosting is to identify a "weak learner" (e.g. a CART tree) and a loss function (e.g. Accuracy or Kappa) the algorithm identifies an additive model that minimizes the loss function. The gradient, in GBM, refers to the residual error from the original model. After the first fit, the residual error is calculated and new learner is fit to the residuals - each model is subsequently added together for a user-specified number of iterations.
+
+---
+
+# Other Models
+
+Model descriptions (Applied Predictive Modeling, Kuhn & Johnson (2013)):
+
+.font120[
+- `rpart` (recursive partitioning/decision tree)
+]
+
+Begin with the entire dataset, search every distinct value of every predictor and find the predictor and split value that maximizes the performance function (classification accuracy). Do this recursively for each predictor in the dataset, recursively partitioning the data by increasingly smaller differences in outcomes between the splits.
+
+---
+
+# Other Models
+
+Model descriptions (Applied Predictive Modeling, Kuhn & Johnson (2013)):
+
+.font120[
+- `rlda` (regularized linear discriminant analysis)
+]
+
+Identify the linear combination of the predictors such that the between group variances was maximized relative to the within group variance. As the number of predictors grows, this deviates from the logistic regression solution because it is more flexible and employs more parameters - the additional parameters allow LDA to handle correlated predictors better than logistic regression.
+
+---
+
+# Other Models
+
+Model descriptions (Applied Predictive Modeling, Kuhn & Johnson (2013)):
+
+.font120[
+- `nnet` (neural network)
+]
+
+Similar to a nonlinear regression model because linear regressors are combined into a set number of latent or hidden variables via a nonlinear function, and the values of the hidden units are summed to generate a linear prediction of the outcome. 
+
+---
+
+# Other Models
+
+Model descriptions:
+
+.font120[
+- `xgbTree` (extreme gradient boosting w/ trees)
+]
+
+Similar to GBM but includes column sub-sampling.
+
+---
+
+# Other Models
+
+Model descriptions:
+
+.font120[
+- `xgbLinear` (extreme gradient boosting w/ logistic regression)
+]
+
+Similar to xgbLinear but uses a logistic regression.
+
+---
+
+# Other Models
+
+We end up with one prediction for each student for each model:
+
+``` {r}
+evaluation_data_8 %>%
+    transmute(n_absences, enrollments, scale_score_mt, `...` = "...", pred_gbm, pred_rpart, pred_rlda, pred_nnet, pred_xgblinear, pred_xgbtree) %>%
+    sample_n(10) %>%
+    knitr::kable("html")
+```
+
+---
+
+# Prediction Agreement
+
+For the `r nrow(evaluation_data_8)` student in the test set, the count of models predicting that each student will be a ready graduate:
+
+``` {r}
+evaluation_data_8 %>%
+    rowwise() %>%
+    mutate(`Models Predicting Ready` = 
+        sum(map_lgl(list(pred_gbm, pred_rpart, pred_rlda, pred_nnet, pred_xgblinear, pred_xgbtree), ~ . == "ready"))
+    ) %>%
+    ungroup() %>%
+    count(`Models Predicting Ready`) %>%
+    knitr::kable("html")
+```
+
+---
+
+layout: false
+class: inverse, middle, center
+
+# Evaluating Predictions
+
+---
+
+# Evaluating Predictions
+
+Accuracy of all models statewide:
+
+``` {r}
+evaluation_data_8 %>%
+    mutate(
+        accuracy_gbm = ready_grad == pred_gbm,
+        accuracy_rpart = ready_grad == pred_rpart,
+        accuracy_rlda = ready_grad == pred_rlda,
+        accuracy_nnet = ready_grad == pred_nnet,
+        accuracy_xgblinear = ready_grad == pred_xgblinear,
+        accuracy_xgbtree = ready_grad == pred_xgbtree
+    ) %>%
+    summarise_at(vars(starts_with("accuracy")), ~ round(100 * mean(.), 1)) %>%
+    knitr::kable("html")
+```
+
+--
+
+Want to check that models perform well across districts, schools, student groups, etc.
+
+---
+
+# Evaluating Predictions
+
+Accuracy of all models by district:
+
+``` {r}
+accuracy_by_district <- evaluation_data_8 %>%
+    mutate(
+        accuracy_gbm = ready_grad == pred_gbm,
+        accuracy_rpart = ready_grad == pred_rpart,
+        accuracy_rlda = ready_grad == pred_rlda,
+        accuracy_nnet = ready_grad == pred_nnet,
+        accuracy_xgblinear = ready_grad == pred_xgblinear,
+        accuracy_xgbtree = ready_grad == pred_xgbtree
+    ) %>%
+    group_by(system) %>%
+    summarise_at(vars(starts_with("accuracy")), ~ round(100 * mean(.), 1)) %>%
+    mutate(accuracy_max = pmax(accuracy_gbm, accuracy_rpart, accuracy_rlda, accuracy_nnet, accuracy_xgblinear, accuracy_xgbtree)) %>%
+    arrange(accuracy_max)
+
+accuracy_by_district %>%
+    select(-accuracy_max) %>%
+    gather(model, accuracy, starts_with("accuracy")) %>%
+    ggplot(aes(x = factor(system), y = accuracy, color = model)) +
+        scale_x_discrete(limits = factor(accuracy_by_district$system)) +
+        scale_y_continuous(limits = c(0, 100)) +
+        geom_point(alpha = 0.5) +
+        theme_minimal() +
+        theme(axis.text.x = element_text(angle = 90, hjust = 1),
+            axis.title.x = element_blank(),
+            legend.position = "bottom")
+```
+
+---
+
+# Evaluating Predictions
+
+Accuracy of best model by district:
+
+``` {r}
+shapefile@data <- left_join(shapefile@data, accuracy_by_district, by = "system") %>%
+    as.data.frame()
+
+bins_accuracy <- c(70, 75, 80, 85, 90, 95, 100)
+pal_accuracy <- colorBin("YlOrRd", domain = shapefile@data$accuracy_max, bins = bins_accuracy)
+
+labels_accuracy <- paste(shapefile$NAME, "<br>", "Accuracy: ", round(shapefile$accuracy_max, 4)) %>%
+    map(htmltools::HTML)
+
+leaflet(shapefile) %>%
+    addTiles() %>%
+    addPolygons(fillColor = ~pal_accuracy(accuracy_max),
+        color = "#444444", weight = 1, fillOpacity = 0.5,
+        highlightOptions = highlightOptions(color = "white", weight = 2, bringToFront = TRUE),
+        label = labels_accuracy) %>%
+    addLegend(pal = pal_accuracy, values = ~accuracy_max, opacity = 0.7, title = "Accuracy",
+        position = "bottomright")
+```
+
+---
+
+# Evaluating Predictions
+
+Accuracy by district size:
+
+``` {r}
+accuracy_by_district %>%
+    select(-accuracy_max) %>%
+    inner_join(count(evaluation_data_8, system), by = "system") %>%
+    rename(district_size = n) %>%
+    gather(model, accuracy, starts_with("accuracy_")) %>%
+    ggplot(aes(x = log10(district_size), y = accuracy)) +
+        geom_point(alpha = 0.5) +
+        scale_y_continuous(limits = c(0, 100)) +
+        facet_wrap(~ model, nrow = 3) +
+        theme_minimal()
+```
+
+---
+
+# Evaluating Predictions
+
+Accuracy by student group:
+
+``` {r}
+groups_list <- c(
+    split(evaluation_data_8, evaluation_data_8$race),
+    split(evaluation_data_8, evaluation_data_8$econ_dis),
+    split(evaluation_data_8, evaluation_data_8$swd),
+    split(evaluation_data_8, evaluation_data_8$el)
+)
+
+accuracy_by_group <- tibble(
+    group = names(groups_list),
+    accuracy_gbm = map_dbl(groups_list, ~ mean(.$ready_grad == .$pred_gbm)),
+    accuracy_rpart = map_dbl(groups_list, ~ mean(.$ready_grad == .$pred_rpart)),
+    accuracy_rlda = map_dbl(groups_list, ~ mean(.$ready_grad == .$pred_rlda)),
+    accuracy_nnet = map_dbl(groups_list, ~ mean(.$ready_grad == .$pred_nnet)),
+    accuracy_xgblinear = map_dbl(groups_list, ~ mean(.$ready_grad == .$pred_xgblinear)),
+    accuracy_xgbtree = map_dbl(groups_list, ~ mean(.$ready_grad == .$pred_xgbtree))
+)
+
+accuracy_by_group %>%
+    gather(model, accuracy, starts_with("accuracy_")) %>%
+    ggplot(aes(x = group, y = accuracy, color = model)) +
+        geom_point() +
+        scale_y_continuous(limits = c(0, 1)) +
+        theme_minimal() +
+        theme(axis.title.x = element_blank(),
+            legend.title = element_blank(), legend.position = "bottom")
+```
+
+---
+
+# Evaluating Predictions
+
+Recall from our logistic regression model, we assigned a probability and predicted that students with `p > 0.5` would be a ready graduate:
+
+``` {r}
+ggplot(test_set, aes(x = ready_grad, y = probs_logistic)) +
+    geom_jitter(alpha = 0.1) +
+    geom_hline(yintercept = 0.5) +
+    theme_minimal()
+```
+
+---
+
+# Evaluating Predictions
+
+Beyond accuracy, two metrics of interest are **sensitivity** and **specificity**.
+
+.pull-left[
+``` {r}
+preds_logistic <- predict(model_logistic, test_x)
+confusionMatrix(preds_logistic, test_y)
+```
+]
+
+.pull-right[
+Sensitivity: Among predicted positives, how many are true positives?
+
+$$Sensitivity = \frac{True Positives}{True Positives + False Negatives}$$
+]
+
+---
+
+# Evaluating Predictions
+
+Beyond accuracy, two metrics of interest are **sensitivity** and **specificity**.
+
+.pull-left[
+``` {r}
+preds_logistic <- predict(model_logistic, test_x)
+confusionMatrix(preds_logistic, test_y)
+```
+]
+
+.pull-right[
+Sensitivity: Among predicted negatives, how many are true negatives?
+
+$$Sensitivity = \frac{True Negatives}{True Negatives + False Positives}$$
+]
+
+---
+
+# Evaluating Predictions
+
+If we plot $1 - specificity$ against $sensitivity$ for all thresholds of `p`, we get a **Receiver Operating Characteristic** curve. The **Area Under the Curve** or **AUC** is another metric of interest in evaluating Machine Learning predictions.
+
+From [StackExchange](https://stats.stackexchange.com/questions/132777/what-does-auc-stand-for-and-what-is-it):
+
+![](images/roc.png)
+
+--
+
+Higher values of AUC indicate better prediction, where an AUC of 1 indicates perfect prediction (all ready grads predicted at 100% probability and all non-ready grads predicted at 0% probability).
+
+---
+
+# Evaluating Predictions
+
+AUC by district:
+
+``` {r}
+districts_list <- split(evaluation_data_8, evaluation_data_8$system)
+
+auc_by_district <- tibble(
+    system = as.numeric(names(districts_list)),
+    district_size = map_int(districts_list, nrow),
+    auc_gbm = map_dbl(districts_list, roc_auc, ready_grad, prob_gbm),
+    auc_rpart = map_dbl(districts_list, roc_auc, ready_grad, prob_rpart),
+    auc_rlda = map_dbl(districts_list, roc_auc, ready_grad, prob_rlda),
+    auc_nnet = map_dbl(districts_list, roc_auc, ready_grad, prob_nnet),
+    auc_xgblinear = map_dbl(districts_list, roc_auc, ready_grad, prob_xgblinear),
+    auc_xgbtree = map_dbl(districts_list, roc_auc, ready_grad, prob_xgbtree)
+) %>%
+    mutate(auc_max = pmax(auc_gbm, auc_rpart, auc_rlda, auc_nnet, auc_xgblinear, auc_xgbtree)) %>%
+    arrange(auc_max)
+
+auc_by_district %>%
+    select(-auc_max) %>%
+    gather(model, auc, starts_with("auc")) %>%
+    ggplot(aes(x = factor(system), y = auc, color = model)) +
+        geom_point(alpha = 0.5) +
+        scale_x_discrete(limits = factor(auc_by_district$system)) +
+        scale_y_continuous(limits = c(0, 1)) +
+        theme_minimal() +
+        theme(axis.text.x = element_text(angle = 90, hjust = 1),
+            axis.title.x = element_blank(),
+            legend.position = "bottom")
+```
+
+---
+
+# Evaluating Predictions
+
+AUC of best model by district:
+
+``` {r}
+shapefile@data <- left_join(shapefile@data, auc_by_district, by = "system") %>%
+    as.data.frame()
+
+# AUC map by district
+bins_auc <- c(0, 0.75, 0.8, 0.85, 0.9, 0.95, 1)
+pal_auc <- colorBin("YlOrRd", domain = shapefile@data$auc_max, bins = bins_auc)
+
+labels_auc <- paste(shapefile$NAME, "<br>", "AUC: ", round(shapefile$auc_max, 4)) %>%
+    map(htmltools::HTML)
+
+leaflet(shapefile) %>%
+    addTiles() %>%
+    addPolygons(fillColor = ~pal_auc(auc_max),
+        color = "#444444", weight = 1, fillOpacity = 0.5,
+        highlightOptions = highlightOptions(color = "white", weight = 2, bringToFront = TRUE),
+        label = labels_auc) %>%
+    addLegend(pal = pal_auc, values = ~auc_max, opacity = 0.7, title = "AUC",
+        position = "bottomright")
+```
+
+---
+
+# Evaluating Predictions
+
+AUC by district size:
+
+``` {r}
+auc_by_district %>%
+    select(-auc_max) %>%
+    gather(model, auc, starts_with("auc_")) %>%
+    ggplot(aes(x = log10(district_size), y = auc)) +
+        geom_point(alpha = 0.5) +
+        scale_y_continuous(limits = c(0, 1)) +
+        facet_wrap(~ model, nrow = 3) +
+        theme_minimal()
+```
+
+---
+
+# Evaluating Predictions
+
+AUC by student group:
+
+``` {r}
+auc_by_group <- tibble(
+    group = names(groups_list),
+    auc_gbm = map_dbl(groups_list, roc_auc, ready_grad, prob_gbm),
+    auc_rpart = map_dbl(groups_list, roc_auc, ready_grad, prob_rpart),
+    auc_rlda = map_dbl(groups_list, roc_auc, ready_grad, prob_rlda),
+    auc_nnet = map_dbl(groups_list, roc_auc, ready_grad, prob_nnet),
+    auc_xgblinear = map_dbl(groups_list, roc_auc, ready_grad, prob_xgblinear),
+    auc_xgbtree = map_dbl(groups_list, roc_auc, ready_grad, prob_xgbtree)
+)
+
+auc_by_group %>%
+    gather(model, auc, starts_with("auc_")) %>%
+    ggplot(aes(x = group, y = auc, color = model)) +
+        geom_point() +
+        scale_y_continuous(limits = c(0, 1)) +
+        theme_minimal() +
+        theme(axis.title.x = element_blank(),
+            legend.title = element_blank(), legend.position = "bottom")
+```
+
+---
+
+# Evaluating Predictions
+
+We can **ensemble** individual model predictions into a single prediction for each student by building a new model with ready graduation as the outcome and the probabilities from each model as the predictors:
+
+.pull-left[
+``` {r}
+evaluation_data_8 %>%
+    select(starts_with("prob")) %>%
+    slice(1:15) %>%
+    knitr::kable("html")
+```
+]
+
+.pull-right[
+``` {r}
+evaluation_data_8 %>%
+    select(ready_grad) %>%
+    slice(1:15)  %>%
+    knitr::kable("html")
+```
+]
+
+---
+
+# Recap
+
+.font120[
+1. Model ready graduation with student test scores, absenteeism, mobility, discipline, school characteristics
+2. Check for reasonable prediction performance across districts, schools, student groups
+3. Ensemble multiple model predictions into one prediction
+    - If ensemble results in improvement in performance, use ensembled model; otherwise can just use a single model
+]
+
+---
+
+layout: false
+class: inverse, middle, center
+
+# How do we use this?
+
+---
+
+# How do we use this?
+
+As an early warning system:
+
+Send information to schools about students predicted not to be ready graduates, and which indicators are leading them to be predicted as not ready.
+
+From [Wisconsin DPI](https://dpi.wi.gov/ews/dropout):
+
+![](images/wi_dews.png)
+
+---
+
+# How do we use this?
+
+We can use the data to decide on thresholds for low, moderate, high risk:
+
+``` {r}
+ggplot(evaluation_data_8, aes(x = scale_score_mt, y = prob_gbm)) +
+    geom_point(alpha = 0.1) +
+    theme_minimal()
+```
+
+---
+
+# How do we use this?
+
+As value-added by comparing actual % ready graduates to predicted % ready graduates:
+
+``` {r}
+evaluation_data_8 %>%
+    group_by(system) %>%
+    summarise_at(c("ready_grad", "pred_gbm"), ~ mean(. == "ready")) %>%
+    mutate(diff = ready_grad - pred_gbm) %>%
+    slice(1:15) %>%
+    knitr::kable("html")
+```
+
+---
+
+# How do we use this?
+
+As value-added by comparing actual % ready graduates to predicted % ready graduates:
+
+``` {r}
+diffs <- evaluation_data_8 %>%
+    group_by(system) %>%
+    summarise_at(c("ready_grad", "pred_gbm"), ~ mean(. == "ready")) %>%
+    mutate(diff = ready_grad - pred_gbm)
+
+shapefile@data <- shapefile@data %>%
+    left_join(diffs, by = "system") %>%
+    as.data.frame()
+
+pal_diffs <- colorQuantile("YlOrRd", domain = shapefile@data$diff, n = 5)
+
+labels_diffs <- paste(shapefile$NAME, "<br>", "% Ready Grad - Predicted: ", round(shapefile$diff, 4)) %>%
+    map(htmltools::HTML)
+
+leaflet(shapefile) %>%
+    addTiles() %>%
+    addPolygons(fillColor = ~pal_diffs(diff),
+        color = "#444444", weight = 1, fillOpacity = 0.5,
+        highlightOptions = highlightOptions(color = "white", weight = 2, bringToFront = TRUE),
+        label = labels_diffs) %>%
+    addLegend(pal = pal_diffs, values = ~diff, opacity = 0.7, title = "Ready Grad - Predicted Percentile",
+        position = "bottomright")
+
+```
+
+---
+
+# Recap
+
+.font120[
+1. Model ready graduation with student test scores, absenteeism, mobility, discipline, school characteristics
+2. Check for reasonable prediction performance across districts, schools, student groups
+3. Ensemble multiple model predictions into one prediction
+    - If ensemble results in improvement in performance, use ensembled model; otherwise can just use a single model
+4. Deploy as Early Warning System or Value-Added or other use?
+]
+
+---
+
+# The End
+
+Code and presentation: https://github.com/tnedu/grad-prediction
