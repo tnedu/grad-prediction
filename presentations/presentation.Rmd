@@ -779,9 +779,9 @@ confusionMatrix(preds_logistic, test_y)
 ]
 
 .pull-right[
-Sensitivity: Among predicted negatives, how many are true negatives?
+Specificity: Among predicted negatives, how many are true negatives?
 
-$$Sensitivity = \frac{True Negatives}{True Negatives + False Positives}$$
+$$Specificity = \frac{True Negatives}{True Negatives + False Positives}$$
 ]
 
 ---
@@ -797,6 +797,24 @@ From [StackExchange](https://stats.stackexchange.com/questions/132777/what-does-
 --
 
 Higher values of AUC indicate better prediction, where an AUC of 1 indicates perfect prediction (all ready grads predicted at 100% probability and all non-ready grads predicted at 0% probability).
+
+---
+
+# Evaluating Predictions
+
+AUC for state:
+
+``` {r}
+tibble(
+    auc_gbm = roc_auc(evaluation_data_8, ready_grad, prob_gbm),
+    auc_rpart = roc_auc(evaluation_data_8, ready_grad, prob_rpart),
+    auc_rlda = roc_auc(evaluation_data_8, ready_grad, prob_rlda),
+    auc_nnet = roc_auc(evaluation_data_8, ready_grad, prob_nnet),
+    auc_xgblinear = roc_auc(evaluation_data_8, ready_grad, prob_xgblinear),
+    auc_xgbtree = roc_auc(evaluation_data_8, ready_grad, prob_xgbtree)
+) %>%
+    knitr::kable("html")
+```
 
 ---
 
