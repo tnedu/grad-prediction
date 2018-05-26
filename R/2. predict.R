@@ -55,7 +55,34 @@ evaluation_data_8 <- prediction_data_8 %>%
         pred_xgblinear = predict(model_xgblinear, prediction_data_8),
         prob_xgblinear = predict(model_xgblinear, prediction_data_8, type = "prob")$ready,
         pred_xgbtree = predict(model_xgbtree, prediction_data_8),
-        prob_xgbtree = predict(model_xgbtree, prediction_data_8, type = "prob")$ready
+        prob_xgbtree = predict(model_xgbtree, prediction_data_8, type = "prob")$ready,
+    # rlda is returning NaN for extremely small probabilities; replace these with the lowest observed predicted probability
+        prob_rlda = if_else(is.nan(prob_rlda), min(prob_rlda, na.rm = TRUE), prob_rlda)
+    )
+
+# Ensemble models by using each prediction as a predictor and using a lm
+train_controls <- trainControl(
+    summaryFunction = twoClassSummary,  # look at classification stats
+    method = "repeatedcv",
+    repeats = 3,                        # repeated cv is pretty standard
+    savePredictions = "final",          # only need final model predictions
+    classProbs = TRUE)                  # want to generate class probabilities for AUC
+
+probs <- c("prob_gbm", "prob_rpart", "prob_rlda", "prob_nnet", "prob_xgblinear", "prob_xgbtree")
+ensemble_x <- as.data.frame(evaluation_data_8[probs])
+ensemble_y <- evaluation_data_8$ready_grad
+
+model_ensemble <- train(x = ensemble_x, y = ensemble_y,
+    method = "glm", family = "binomial", trControl = train_controls)
+
+model_stack <- train(x = ensemble_x, y = ensemble_y,
+    method = "gbm", trControl = train_controls)
+
+evaluation_data_8 <- mutate(evaluation_data_8,
+        pred_ensemble = predict(model_ensemble, evaluation_data_8),
+        prob_ensemble = predict(model_ensemble, evaluation_data_8, type = "prob")$ready,
+        pred_stack = predict(model_stack, evaluation_data_8),
+        prob_stack = predict(model_stack, evaluation_data_8, type = "prob")$ready
     )
 
 write_csv(evaluation_data_8, "data/evaluation_data_8.csv", na = "")
